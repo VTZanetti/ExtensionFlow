@@ -4,7 +4,7 @@ Extensão Chrome para download de áudio MP3 de vídeos do YouTube. Desenvolvida
 
 ## Preview
 
-A extensão detecta automaticamente vídeos do YouTube e permite fazer download do áudio em formato MP3 com qualidade máxima através de um servidor local.
+![Preview 1](https://i.imgur.com/TZDfgbB.png)
 
 ## Getting Started
 
@@ -81,16 +81,6 @@ O servidor estará disponível em `http://localhost:3000` (ou conforme configura
 2. Navegue até um vídeo do YouTube
 3. Clique no ícone da extensão AudioFlow
 4. Clique em "Download MP3"
-
-## Features
-
-- ✅ Detecção automática de vídeos do YouTube
-- ✅ Interface moderna com tema dark
-- ✅ Download direto em MP3
-- ✅ Qualidade máxima de áudio
-- ✅ Botão de cancelamento de download
-- ✅ Suporte a servidor local configurável
-- ✅ Limpeza automática de arquivos temporários
 
 ## Deployment
 
