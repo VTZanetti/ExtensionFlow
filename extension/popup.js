@@ -23,34 +23,82 @@ document.addEventListener('DOMContentLoaded', function() {
         const port = typeof AUDIOFLOW_CONFIG !== 'undefined' ? AUDIOFLOW_CONFIG.SERVER_PORT : 3000;
         const checkUrl = `http://${host}:${port}`;
         
+        console.log(`[checkServerStatus] Verificando: ${checkUrl}`);
+        
         try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => {
+                console.log(`[checkServerStatus] Timeout após 5 segundos`);
+                controller.abort();
+            }, 5000);
+            
             const response = await fetch(checkUrl, {
                 method: 'GET',
-                headers: { 'Accept': 'application/json' }
+                headers: { 
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                mode: 'cors',
+                cache: 'no-cache',
+                signal: controller.signal
+            }).finally(() => {
+                clearTimeout(timeoutId);
             });
             
+            console.log(`[checkServerStatus] Resposta: status=${response.status}, ok=${response.ok}`);
+            
             if (response.ok) {
+                const data = await response.json().catch(() => null);
                 serverUrl = checkUrl;
-                updateServerStatus('online', 'Servidor local conectado');
+                updateServerStatus('online', `Servidor conectado em ${host}:${port}`);
+                console.log(`[checkServerStatus] Servidor online:`, data);
                 return true;
+            } else {
+                const errorMsg = `Servidor respondeu com erro: ${response.status}`;
+                updateServerStatus('offline', errorMsg);
+                console.error(`[checkServerStatus] ${errorMsg}`);
+                return false;
             }
         } catch (error) {
+            let errorMsg = 'Servidor não encontrado';
+            if (error.name === 'AbortError') {
+                errorMsg = `Timeout ao conectar (5s) - Verifique se o servidor está rodando em ${host}:${port}`;
+            } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                errorMsg = `Erro de rede - Verifique se o servidor está acessível em ${host}:${port}`;
+            } else {
+                errorMsg = `Erro: ${error.message}`;
+            }
+            
+            updateServerStatus('offline', errorMsg);
+            console.error(`[checkServerStatus] ${errorMsg}:`, error);
+            return false;
         }
-        
-        updateServerStatus('offline', 'Servidor não encontrado');
-        return false;
     }
 
     function updateServerStatus(status, message) {
-        serverStatusText.textContent = message;
+        // Truncar mensagem se muito longa
+        const maxMessageLength = 50;
+        const truncatedMessage = message.length > maxMessageLength 
+            ? message.substring(0, maxMessageLength) + '...' 
+            : message;
+        serverStatusText.textContent = truncatedMessage;
+        serverStatusText.title = message; // Tooltip com texto completo
         statusIndicator.className = `status-indicator ${status}`;
         
         const serverInfoRow = document.getElementById('serverInfoRow');
         if (status === 'online') {
-            serverInfo.textContent = `${serverUrl || 'localhost:3000'}`;
+            const serverUrlText = serverUrl || 'localhost:3000';
+            // Truncar URL se muito longa
+            const maxUrlLength = 30;
+            const displayUrl = serverUrlText.length > maxUrlLength 
+                ? '...' + serverUrlText.substring(serverUrlText.length - maxUrlLength)
+                : serverUrlText;
+            serverInfo.textContent = displayUrl;
+            serverInfo.title = serverUrlText; // Tooltip com URL completa
             serverInfoRow.style.display = 'flex';
         } else {
             serverInfo.textContent = '';
+            serverInfo.title = '';
             serverInfoRow.style.display = 'none';
         }
     }
@@ -58,8 +106,14 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateVideoInfo(videoData) {
         if (videoData && videoData.videoId) {
             currentVideoInfo = videoData;
+            // Título já será truncado pelo CSS com -webkit-line-clamp
             videoTitle.textContent = videoData.title;
+            videoTitle.title = videoData.title; // Tooltip com título completo
+            
+            // Video ID pode ser longo, mas CSS já trata com word-break
             videoId.textContent = `ID: ${videoData.videoId}`;
+            videoId.title = `ID: ${videoData.videoId}`; // Tooltip com ID completo
+            
             videoInfo.classList.remove('hidden');
             noVideo.classList.add('hidden');
             downloadBtn.disabled = false;
@@ -105,6 +159,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 cancelBtn.classList.add('hidden');
                 downloadBtn.disabled = false;
                 downloadBtn.innerHTML = '<span class="btn-icon">' + downloadIcon + '</span><span class="btn-text">Download MP3</span>';
+                
+                // Mostrar erro ao usuário
+                if (response && response.error) {
+                    alert('Erro no download: ' + response.error);
+                } else {
+                    alert('Erro desconhecido no download');
+                }
             }
         });
     }
@@ -195,6 +256,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 cancelBtn.classList.add('hidden');
                 downloadBtn.disabled = false;
                 downloadBtn.innerHTML = '<span class="btn-icon">' + downloadIcon + '</span><span class="btn-text">Download MP3</span>';
+                
+                // Mostrar erro ao usuário
+                if (request.error) {
+                    alert('Erro no download: ' + request.error);
+                }
             }
         } else if (request.action === 'downloadCancelled') {
             if (request.videoId === currentDownloadVideoId) {

@@ -1,3 +1,5 @@
+importScripts('config.js');
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'downloadMP3') {
         handleDownload(request.videoInfo, sendResponse);
@@ -204,29 +206,78 @@ async function findLocalServer() {
     const port = typeof AUDIOFLOW_CONFIG !== 'undefined' ? AUDIOFLOW_CONFIG.SERVER_PORT : 3000;
     const serverUrl = `http://${host}:${port}`;
     
+    console.log(`[findLocalServer] Tentando conectar em: ${serverUrl}`);
+    console.log(`[findLocalServer] Config: host=${host}, port=${port}`);
+    
     try {
-        console.log(`Testando servidor: ${serverUrl}`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+            console.log(`[findLocalServer] Timeout após 5 segundos`);
+            controller.abort();
+        }, 5000);
+        
+        console.log(`[findLocalServer] Iniciando fetch...`);
         const response = await fetch(`${serverUrl}/`, {
             method: 'GET',
-            headers: { 'Accept': 'application/json' },
-            mode: 'cors'
+            headers: { 
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            mode: 'cors',
+            cache: 'no-cache',
+            signal: controller.signal
+        }).finally(() => {
+            clearTimeout(timeoutId);
         });
         
+        console.log(`[findLocalServer] Resposta recebida: status=${response.status}, ok=${response.ok}`);
+        
         if (response.ok) {
-            console.log(`Servidor encontrado em: ${serverUrl}`);
+            const data = await response.json().catch(() => null);
+            console.log(`[findLocalServer] Servidor encontrado em: ${serverUrl}`, data);
             return serverUrl;
+        } else {
+            console.error(`[findLocalServer] Servidor respondeu com erro: ${response.status} ${response.statusText}`);
+            const text = await response.text().catch(() => '');
+            console.error(`[findLocalServer] Resposta:`, text.substring(0, 200));
         }
     } catch (error) {
-        console.log(`Falha em ${serverUrl}:`, error.message);
+        if (error.name === 'AbortError') {
+            console.error(`[findLocalServer] Timeout ao conectar em ${serverUrl} (5 segundos)`);
+        } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+            console.error(`[findLocalServer] Erro de rede ao conectar em ${serverUrl}:`, error.message);
+            console.error(`[findLocalServer] Possíveis causas:`);
+            console.error(`  - Servidor não está rodando`);
+            console.error(`  - Firewall bloqueando a conexão`);
+            console.error(`  - IP ou porta incorretos`);
+        } else if (error.message.includes('CORS')) {
+            console.error(`[findLocalServer] Erro CORS ao conectar em ${serverUrl}:`, error.message);
+        } else {
+            console.error(`[findLocalServer] Erro desconhecido ao conectar em ${serverUrl}:`, error.message);
+            console.error(`[findLocalServer] Stack:`, error.stack);
+        }
     }
     
-    console.log('Servidor não encontrado');
+    console.error(`[findLocalServer] Servidor não encontrado após todas as tentativas`);
     return null;
 }
 
 async function convertWithLocalServer(videoInfo, serverUrl, signal) {
     try {
         const videoTitle = await getVideoTitle(videoInfo.videoId);
+        console.log(`Iniciando conversão: ${videoInfo.videoId} - ${videoTitle}`);
+        
+        // Timeout de 15 minutos para conversão (vídeos longos podem demorar)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15 * 60 * 1000);
+        
+        // Combinar signals (timeout + cancelamento manual)
+        if (signal) {
+            signal.addEventListener('abort', () => {
+                controller.abort();
+                clearTimeout(timeoutId);
+            });
+        }
         
         const response = await fetch(`${serverUrl}/convert`, {
             method: 'POST',
@@ -237,15 +288,34 @@ async function convertWithLocalServer(videoInfo, serverUrl, signal) {
                 videoId: videoInfo.videoId,
                 title: videoTitle
             }),
-            signal: signal
+            signal: controller.signal
+        }).finally(() => {
+            clearTimeout(timeoutId);
         });
         
         if (!response.ok) {
-            throw new Error(`Servidor local error: ${response.status}`);
+            // Tentar ler erro JSON se disponível
+            let errorMessage = `Servidor local error: ${response.status}`;
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.error || errorMessage;
+                console.error('Erro do servidor:', errorData);
+            } catch {
+                // Se não for JSON, usar mensagem padrão
+                const text = await response.text();
+                console.error('Resposta de erro do servidor:', text.substring(0, 200));
+            }
+            throw new Error(errorMessage);
         }
         
         const contentType = response.headers.get('content-type') || '';
         const contentDisposition = response.headers.get('content-disposition') || '';
+        
+        // Verificar se a resposta é JSON (erro) ou blob (sucesso)
+        if (contentType.includes('application/json')) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Erro desconhecido do servidor');
+        }
         
         let extension = 'mp3';
         if (contentType.includes('webm')) {
@@ -256,6 +326,10 @@ async function convertWithLocalServer(videoInfo, serverUrl, signal) {
         
         const blob = await response.blob();
         
+        if (blob.size === 0) {
+            throw new Error('Arquivo vazio recebido do servidor');
+        }
+        
         return {
             blob: blob,
             extension: extension
@@ -265,7 +339,8 @@ async function convertWithLocalServer(videoInfo, serverUrl, signal) {
         if (error.name === 'AbortError') {
             throw error;
         }
-        console.log('Servidor local falhou:', error.message);
+        console.error('Servidor local falhou:', error.message);
+        console.error('Stack:', error.stack);
         return null;
     }
 }
